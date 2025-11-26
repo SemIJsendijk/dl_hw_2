@@ -24,8 +24,12 @@ class MatrixGraphConvolution(nn.Module):
 
         Hint: A[i,j] -> there is an edge from node j to node i
         """
-        adjacency_matrix = ...
+        adjacency_matrix = torch.zeros((num_nodes,num_nodes))
+        for i in range(len(edge_index[1])):
+            adjacency_matrix[edge_index[1][i], edge_index[0][i]] = 1
+
         return adjacency_matrix
+    
 
     def make_inverted_degree_matrix(self, edge_index, num_nodes):
         """
@@ -73,10 +77,15 @@ class MessageGraphConvolution(nn.Module):
 
         Hint: check out torch.Tensor.index_add function
         """
-        messages = ...
-        aggregated_messages = ...
-        sum_weight = ...
+        send = edge_index[0]
+        receive = edge_index[1]
 
+
+
+        messages = x[send]
+        aggregated_messages = torch.zeros_like(x)
+
+        aggregated_messages.index_add_(dim=0, index=receive, source=messages)
         return aggregated_messages
 
     def update(self, x, messages):
@@ -87,7 +96,12 @@ class MessageGraphConvolution(nn.Module):
         :param messages: messages vector with shape [num_nodes, num_in_features]
         :return: updated values of nodes. shape: [num_nodes, num_out_features]
         """
-        x = ...
+        p1 = messages @ self.W.t()
+        p2 = x @ self.B.t()
+
+        new = p1+p2
+
+        x = torch.relu(new)
         return x
 
     def forward(self, x, edge_index):
