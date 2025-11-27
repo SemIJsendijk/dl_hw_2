@@ -25,8 +25,7 @@ class MatrixGraphConvolution(nn.Module):
         Hint: A[i,j] -> there is an edge from node j to node i
         """
         adjacency_matrix = torch.zeros((num_nodes,num_nodes))
-        for i in range(len(edge_index[1])):
-            adjacency_matrix[edge_index[1][i], edge_index[0][i]] = 1
+        adjacency_matrix[edge_index[1], edge_index[0]] = 1
 
         return adjacency_matrix
     
@@ -39,9 +38,13 @@ class MatrixGraphConvolution(nn.Module):
         :param num_nodes: number of nodes in the graph.
         :return: inverted degree matrix with shape [num_nodes, num_nodes]. Set degree of nodes without an edge to 1.
         """
-        degree_vector = ...
-        inverted_degree_vector = ...
-        inverted_degree_matrix = ...
+        degree_vector = torch.ones(num_nodes)
+        ones_edge = torch.ones(edge_index.size(1))
+        degree_vector.index_add_(dim=0, index=edge_index[1], source=ones_edge)
+
+
+        inverted_degree_vector = 1.0/degree_vector
+        inverted_degree_matrix = torch.diag(inverted_degree_vector)
         return inverted_degree_matrix
 
     def forward(self, x, edge_index):
@@ -54,7 +57,10 @@ class MatrixGraphConvolution(nn.Module):
         """
         A = self.make_adjacency_matrix(edge_index, x.size(0))
         D_inv = self.make_inverted_degree_matrix(edge_index, x.size(0))
-        out = ...
+
+        A_hat = D_inv @ A
+        features = A_hat @ x
+        out = self.update(x, features)
         return out
 
 class MessageGraphConvolution(nn.Module):
@@ -142,17 +148,27 @@ class GraphAttention(nn.Module):
         edge_index, _ = add_self_loops(edge_index)
 
         sources, destinations = edge_index
-        activations = ...
-        messages = ...
+        
+        messages = x @ self.W.t()
 
-        attention_inputs = ...
+        msg_source = messages[sources]
+        msg_destinations = messages[destinations]
 
-        edge_weights_numerator = ...
-        weighted_messages = ...
+        attention_inputs = torch.cat((msg_source, msg_destinations), dim=1)
+        activations = F.leaky_relu(attention_inputs @ self.a).unsqueeze(-1)
 
-        softmax_denominator = ...
+        edge_weights_numerator = torch.exp(activations)
+        weighted_messages = msg_source * edge_weights_numerator
 
-        aggregated_messages = ...
+        softmax_denominator = torch.zeros((x.size(0),1))
+        softmax_denominator.index_add_(0, destinations, edge_weights_numerator)
+
+        aggregated_messages = torch.zeros_like(messages)
+        aggregated_messages.index_add_(dim=0, index=destinations, source=weighted_messages)
+
+        aggregated_messages = aggregated_messages/ softmax_denominator
+        aggregated_messages = torch.relu(aggregated_messages)
+
         return aggregated_messages, {'edge_weights': edge_weights_numerator, 'softmax_weights': softmax_denominator,
                                      'messages': messages}
 
