@@ -110,20 +110,27 @@ class CausalSelfAttention(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Tuple containing the modified query and key tensors.
         """
+        device = xq.device
+        dim = xq.shape[-1]
+
         # Generate RoPE embeddings dynamically based on T
-        seq_pos = ...  # Shape: (T)
-        freqs = ...    # Shape: (T, dim // 2)
-        pos_emb = ...  # Shape: (1, 1, T, dim)
+        seq_pos = torch.arange(T, device=device, dtype=torch.float32)  # Shape: (T)
+        freqs = torch.outer(seq_pos, self.inv_freq.to(device))    # Shape: (T, dim // 2)
+        pos_emb = torch.cat((freqs, freqs), dim=-1).view(1, 1, T, dim)  # Shape: (1, 1, T, dim)
         
         # Split pos into sin and cos components, repeating each to match xq and xk dimensions
-        pos_sin = ...
-        pos_cos = ...
+        pos_sin = pos_emb.sin()
+        pos_cos = pos_emb.cos()
         
         # Apply RoPE transformation: pair and rotate dimensions
         # Rotate query and key tensors
-        xq_rot = ...
-        xk_rot = ...
-        raise NotImplementedError
+        def rotate(x):
+            x1 = x[..., : x.shape[-1] // 2]
+            x2 = x[..., x.shape[-1] // 2 :]
+            return torch.cat((-x2, x1), dim=-1)
+
+        xq_rot = (xq * pos_cos) + (rotate(xq) * pos_sin)
+        xk_rot = (xk * pos_cos) + (rotate(xk) * pos_sin)
         
         return xq_rot, xk_rot
         
@@ -153,6 +160,7 @@ class CausalSelfAttention(nn.Module):
             #     dropout_p=self.attn_dropout.p if self.training else 0,
             #     is_causal=True
             # )
+            pass
         else:
             # Compute attention scores
             
@@ -415,7 +423,7 @@ class GPT(nn.Module):
         # Forward token and position embedders
         # token embeddings of shape (b, t, n_embd)
         # apply dropout to the tokens
-        tok_emb = ...
+        tok_emb = self.transformer['w_token_emb'](idx)
 
         if self.config.abs_emb:
             pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
@@ -424,9 +432,14 @@ class GPT(nn.Module):
         else:
             x = tok_emb
 
+        x = self.transformer['drop'](x)
+        for block in self.transformer.h:
+            x = block(x)
+
+        x = self.transformer['ln_f'](x)
         # Iterate through the transformer blocks
         # Apply final layer normalization and linear layer to produce logits
-        logits = ...
+        logits = self.lm_head(x)
 
         return logits
 
