@@ -444,7 +444,7 @@ class GPT(nn.Module):
         return logits
 
     @torch.inference_mode()
-    def generate(self, idx: torch.LongTensor, max_new_tokens: int, temperature:float = 1.0, do_sample:bool = False, top_k:int = None, top_p: float = 0.6):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature:float = 1.0, do_sample:bool = False, top_k:int = None, top_p: float = 0.6):
         """
         Generates a sequence of tokens by autoregressively predicting new tokens based on the 
         provided context (idx). The generation process can be controlled by temperature, sampling 
@@ -483,23 +483,38 @@ class GPT(nn.Module):
 
             # forward the model to get the logits for the index in the sequence
             # pluck the logits at the final step and scale by desired temperature
+            logits = self(idx_cond)
+            logits = logits[:, -1, :] / temperature
 
             if not do_sample:
                 # take the most likely token
-                idx_next = ...
+                idx_next = torch.argmax(logits, dim=-1, keepdim=True)
             
             else:
                 # apply softmax to convert logits to (normalized) probabilities
-
+                probs = torch.softmax(logits, dim=-1)
                 # optionally only consider top-k logits for sampling. 
                 if top_k is not None:
-                    pass
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float('Inf')
+                    probs = torch.softmax(logits, dim=-1)
 
                 # optionally apply top-p sampling
                 if top_p is not None:
-                    pass
-            
-            # append sampled index to the running sequence and continue
-            idx = ...
+                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
 
+                    sort_ind_remove = cumulative_probs > top_p
+                    sort_ind_remove[..., 1:] = sort_ind_remove[..., :-1].clone()
+                    sort_ind_remove[..., 0] = 0
+
+                    ind_remove = sort_ind_remove.scatter(1, sorted_indices, sort_ind_remove)
+                    logits[ind_remove] = -float('Inf')
+                    probs = torch.softmax(logits, dim=-1)
+
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+            
         return idx
